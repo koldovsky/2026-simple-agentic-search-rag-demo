@@ -1,0 +1,15 @@
+{
+  "name": "its-devs-demo-hybrid-search-rag",
+  "version": "0.1.0",
+  "description": "Hybrid search RAG demo (console app)",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}
