@@ -105,7 +105,9 @@ async function runQuery(db, query, mode) {
 // ---------- CLI ----------
 
 function printError(err) {
-  const status = err.status ? ` [${err.status}${err.code ? ` ${err.code}` : ''}]` : '';
+  // AI SDK errors carry `statusCode`; keep `status` as a fallback.
+  const code = err.statusCode ?? err.status;
+  const status = code ? ` [${code}]` : '';
   console.error(`Error${status}: ${redact(err.message)}`);
 }
 
