@@ -21,6 +21,8 @@ export const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL ?? 'text-embedding-3-
 export const CHUNK_SIZE = 500;
 export const CHUNK_OVERLAP_LINES = 1;
 export const TOP_K = 3;
+export const CANDIDATES = 20; // results each retriever passes to fusion
+export const RRF_K = 60;
 
 // Strips anything that looks like an OpenAI key (even partially masked)
 // from messages, so errors are safe to show on a shared screen.

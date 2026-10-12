@@ -8,7 +8,9 @@
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "index": "node src/index.js index",
-    "search": "node src/index.js search"
+    "search": "node src/index.js search",
+    "search:vector": "node src/index.js search --mode=vector",
+    "search:keyword": "node src/index.js search --mode=keyword"
   },
   "engines": {
     "node": ">=20"
