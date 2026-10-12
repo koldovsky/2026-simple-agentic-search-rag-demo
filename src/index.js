@@ -1,60 +1,63 @@
-import { RecursiveCharacterTextSplitter } from '@langchain/textsplitters';
 import { Command, Option } from 'commander';
-import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
-import { relative } from 'node:path';
-import { cwd, stdin, stdout } from 'node:process';
+import { stdin, stdout } from 'node:process';
 import { createInterface } from 'node:readline';
 
-import {
-  CHUNK_OVERLAP,
-  CHUNK_SIZE,
-  EMBEDDING_MODEL,
-  INDEX_PATH,
-  SOURCE_PATH,
-  TOP_K,
-  redact,
-} from './config.js';
+import { runAgent } from './agent.js';
+import { LLM_MODEL, TOP_K, redact } from './config.js';
 import { embed } from './embeddings.js';
-import { buildDb, loadIndex, saveIndex, searchDb, totalChunks } from './search-engine.js';
+import { buildIndex, getDb } from './indexer.js';
+import { searchDb, totalChunks } from './search-engine.js';
 
 // CLI mode name -> Orama search mode
 const MODES = { hybrid: 'hybrid', vector: 'vector', keyword: 'fulltext' };
 
-const sha256 = (text) => createHash('sha256').update(text).digest('hex');
+// ---------- agent ----------
 
-async function buildIndex() {
-  const source = await readFile(SOURCE_PATH, 'utf8');
-  const splitter = new RecursiveCharacterTextSplitter({ chunkSize: CHUNK_SIZE, chunkOverlap: CHUNK_OVERLAP });
-  // The doc has CRLF line endings and trailing spaces; tidy them before splitting.
-  const chunks = await splitter.splitText(source.replace(/[ \t]+$/gm, '').replace(/\r\n?/g, '\n'));
-
-  console.log(`Embedding ${chunks.length} chunks with ${EMBEDDING_MODEL}...`);
-  const vectors = await embed(chunks);
-  const db = await buildDb(chunks, vectors);
-
-  const meta = {
-    model: EMBEDDING_MODEL,
-    dimensions: vectors[0].length,
-    sourceHash: sha256(source),
-    createdAt: new Date().toISOString(),
-    chunkCount: chunks.length,
-  };
-  await saveIndex(INDEX_PATH, db, meta);
-  console.log(`Saved ${chunks.length} chunks to ${relative(cwd(), INDEX_PATH)}`);
-  return db;
-}
-
-// Reuses the stored index unless the source doc or the model changed.
-async function getDb() {
-  const index = await loadIndex(INDEX_PATH);
-  const source = await readFile(SOURCE_PATH, 'utf8');
-  if (index && index.meta.model === EMBEDDING_MODEL && index.meta.sourceHash === sha256(source)) {
-    return index.db;
+function printEvent(event) {
+  if (event.type === 'search') {
+    const found = event.chunkIds.length ? `chunks ${event.chunkIds.join(', ')}` : 'no new chunks';
+    console.log(`🔎 search ${event.n}/${event.max}: "${event.query}" → ${found}`);
+  } else if (event.type === 'budget') {
+    console.log('⛔ search budget used up, answering with what was found');
   }
-  console.log('Index is missing or stale, rebuilding...');
-  return buildIndex();
 }
+
+async function ask(db, question) {
+  const { answer, searches, usage } = await runAgent(db, question, { onEvent: printEvent });
+  const count = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  const stats = [
+    count(searches, 'search', 'searches'),
+    count(usage.llmCalls, 'LLM call', 'LLM calls'),
+    `${(usage.tokens / 1000).toFixed(1)}k tokens`,
+  ];
+  console.log(`💬 answer (${stats.join(', ')})\n`);
+  console.log(answer);
+}
+
+async function chat(db) {
+  const rl = createInterface({ input: stdin, output: stdout, prompt: '\n> ' });
+  console.log(`Agentic RAG over ${totalChunks(db)} chunks, model ${LLM_MODEL}.`);
+  console.log('Ask a question about IT STEP University (empty line or "exit" to quit).');
+
+  let closed = false;
+  rl.on('close', () => (closed = true));
+
+  rl.prompt();
+  // for-await ends cleanly on Ctrl+C / end of input as well.
+  for await (const line of rl) {
+    const question = line.trim();
+    if (!question || question === 'exit') break;
+    try {
+      await ask(db, question);
+    } catch (err) {
+      printError(err);
+    }
+    if (!closed) rl.prompt();
+  }
+  rl.close();
+}
+
+// ---------- raw retrieval (for comparison) ----------
 
 const rankMap = (results) => new Map(results.map((result, i) => [result.id, { rank: i + 1, score: result.score }]));
 
@@ -99,43 +102,23 @@ async function runQuery(db, query, mode) {
   }
 }
 
-async function interactive(db, initialMode) {
-  let mode = initialMode;
-  const modeNames = Object.keys(MODES);
-  const rl = createInterface({ input: stdin, output: stdout, prompt: '\n> ' });
-  console.log(`Loaded ${totalChunks(db)} chunks. Mode: ${mode}.`);
-  console.log(`Ask a question, switch with "/mode ${modeNames.join('|')}", empty line or "exit" to quit.`);
+// ---------- CLI ----------
 
-  let closed = false;
-  rl.on('close', () => (closed = true));
-
-  rl.prompt();
-  // for-await ends cleanly on Ctrl+C / end of input as well.
-  for await (const line of rl) {
-    const input = line.trim();
-    if (!input || input === 'exit') break;
-
-    const modeSwitch = input.match(/^\/mode\s+(\S+)$/);
-    if (modeSwitch) {
-      if (modeSwitch[1] in MODES) {
-        mode = modeSwitch[1];
-        console.log(`Mode: ${mode}`);
-      } else {
-        console.log(`Unknown mode "${modeSwitch[1]}". Use one of: ${modeNames.join(', ')}`);
-      }
-    } else {
-      await runQuery(db, input, mode);
-    }
-    if (!closed) rl.prompt();
-  }
-  rl.close();
+function printError(err) {
+  const status = err.status ? ` [${err.status}${err.code ? ` ${err.code}` : ''}]` : '';
+  console.error(`Error${status}: ${redact(err.message)}`);
 }
 
 const program = new Command()
-  .name('hybrid-search')
-  .description('Hybrid (BM25 + embeddings) search over doc/context.txt')
-  .addOption(new Option('-m, --mode <mode>', 'search mode').choices(Object.keys(MODES)).default('hybrid'))
-  .action(async () => interactive(await getDb(), program.opts().mode));
+  .name('agentic-rag')
+  .description('Agentic search RAG over doc/context.txt')
+  .action(async () => chat(await getDb()));
+
+program
+  .command('ask')
+  .description('ask the agent a single question')
+  .argument('<question...>', 'question about the document')
+  .action(async (words) => ask(await getDb(), words.join(' ')));
 
 program
   .command('index')
@@ -146,14 +129,12 @@ program
 
 program
   .command('search')
-  .description('run a single query')
-  .argument('<query...>', 'question to search for')
-  .action(async (words, _options, command) => {
-    await runQuery(await getDb(), words.join(' '), command.optsWithGlobals().mode);
-  });
+  .description('raw retrieval without the agent (for comparison)')
+  .argument('<query...>', 'query to search for')
+  .addOption(new Option('-m, --mode <mode>', 'search mode').choices(Object.keys(MODES)).default('hybrid'))
+  .action(async (words, options) => runQuery(await getDb(), words.join(' '), options.mode));
 
 program.parseAsync().catch((err) => {
-  const status = err.status ? ` [${err.status}${err.code ? ` ${err.code}` : ''}]` : '';
-  console.error(`Error${status}: ${redact(err.message)}`);
+  printError(err);
   process.exitCode = 1;
 });

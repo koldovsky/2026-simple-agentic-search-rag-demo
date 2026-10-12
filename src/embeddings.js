@@ -1,16 +1,5 @@
-import OpenAI from 'openai';
-import { EMBEDDING_MODEL, assertApiKey } from './config.js';
-
-let client;
-
-function getClient() {
-  if (!client) {
-    assertApiKey();
-    // The SDK reads OPENAI_API_KEY from process.env by itself.
-    client = new OpenAI();
-  }
-  return client;
-}
+import { EMBEDDING_MODEL } from './config.js';
+import { getClient } from './openai-client.js';
 
 // Embeds a batch of texts in one request; returns vectors in input order.
 export async function embed(texts) {
