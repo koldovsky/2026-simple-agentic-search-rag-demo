@@ -17,6 +17,12 @@
   },
   "license": "MIT",
   "dependencies": {
-    "openai": "^7.32.0"
+    "@langchain/textsplitters": "^1.0.2",
+    "@orama/orama": "^3.1.18",
+    "@orama/stemmers": "^3.1.18",
+    "commander": "^15.0.0",
+    "dotenv": "^18.0.7",
+    "openai": "^7.32.0",
+    "stopword": "^3.1.5"
   }
 }

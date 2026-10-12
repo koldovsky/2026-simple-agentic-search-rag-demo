@@ -1,28 +1,23 @@
-import { existsSync, readFileSync } from 'node:fs';
+import dotenv from 'dotenv';
 import { fileURLToPath } from 'node:url';
-import { parseEnv } from 'node:util';
 
 const fromRoot = (relativePath) => fileURLToPath(new URL(`../${relativePath}`, import.meta.url));
 
-// Load .env manually (instead of process.loadEnvFile) so a UTF-8 BOM
-// saved by Windows editors doesn't corrupt the first variable name.
-const ENV_PATH = fromRoot('.env');
-if (existsSync(ENV_PATH)) {
-  const vars = parseEnv(readFileSync(ENV_PATH, 'utf8').replace(/^﻿/, ''));
-  for (const [name, value] of Object.entries(vars)) {
-    process.env[name] ??= value;
-  }
-}
+// quiet: dotenv would otherwise print a banner line on every run.
+dotenv.config({ path: fromRoot('.env'), quiet: true });
 
 export const SOURCE_PATH = fromRoot('doc/context.txt');
 export const INDEX_PATH = fromRoot('data/index.json');
 
 export const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL ?? 'text-embedding-3-small';
 export const CHUNK_SIZE = 500;
-export const CHUNK_OVERLAP_LINES = 1;
+export const CHUNK_OVERLAP = 60;
 export const TOP_K = 3;
-export const CANDIDATES = 20; // results each retriever passes to fusion
-export const RRF_K = 60;
+// Orama's default vector threshold is 0.8; our cosine scores sit around 0.2–0.65.
+export const MIN_SIMILARITY = 0.1;
+export const HYBRID_WEIGHTS = { text: 0.5, vector: 0.5 };
+// Levenshtein distance 1 bridges stemmer gaps like гуртожиток / гуртожитки.
+export const KEYWORD_TOLERANCE = 1;
 
 // Strips anything that looks like an OpenAI key (even partially masked)
 // from messages, so errors are safe to show on a shared screen.
